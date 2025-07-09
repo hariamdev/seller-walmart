@@ -22,12 +22,15 @@ export interface Product {
 
 export interface WalmartToken {
   id: string;
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: string;
-  tokenType: string;
-  sellerId: string;
-  createdAt: string;
+  seller_id: string;
+  access_token: string;
+  refresh_token?: string;
+  token_type: string;
+  expires_in: number;
+  expires_at: string;
+  scope?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface WalmartEndpoint {

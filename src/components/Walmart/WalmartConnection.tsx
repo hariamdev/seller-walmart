@@ -1,108 +1,104 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { WalmartToken } from '../../types';
+import { WalmartTokenService, WalmartTokenRecord } from '../../services/walmartTokenService';
 import { 
   ShoppingCart, 
   CheckCircle, 
   AlertCircle, 
   RefreshCw,
   Clock,
-  Key
+  Key,
+  ExternalLink
 } from 'lucide-react';
 import { format, isAfter, subHours } from 'date-fns';
 
 const WalmartConnection: React.FC = () => {
   const { user } = useAuth();
-  const [token, setToken] = useState<WalmartToken | null>(null);
+  const [token, setToken] = useState<WalmartTokenRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     fetchToken();
+    
+    // Check for authorization code in URL (OAuth callback)
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const state = urlParams.get('state');
+    const error = urlParams.get('error');
+    
+    if (error) {
+      setError(`Authorization failed: ${error}`);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (code) {
+      handleAuthorizationCallback(code, state);
+    }
   }, [user]);
 
   const fetchToken = async () => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('walmart_tokens')
-        .select('*')
-        .eq('seller_id', user.id)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-      setToken(data);
+      const tokenData = await WalmartTokenService.getStoredToken(user.id);
+      setToken(tokenData);
     } catch (error) {
       console.error('Error fetching token:', error);
     }
   };
 
-  const connectToWalmart = async () => {
+  const handleAuthorizationCallback = async (code: string, state: string | null) => {
+    if (!user) return;
+    
     setConnecting(true);
     setError('');
 
     try {
-      // Simulate Walmart Token API call
-      // In real implementation, this would call Walmart's Token API
-      const mockTokenResponse = {
-        access_token: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...',
-        token_type: 'Bearer',
-        expires_in: 3600, // 1 hour
-      };
-
-      const expiresAt = new Date(Date.now() + mockTokenResponse.expires_in * 1000);
-
-      const tokenData = {
-        seller_id: user!.id,
-        access_token: mockTokenResponse.access_token,
-        token_type: mockTokenResponse.token_type,
-        expires_at: expiresAt.toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from('walmart_tokens')
-        .upsert(tokenData)
-        .select()
-        .single();
-
-      if (error) throw error;
-      setToken(data);
+      const redirectUri = `${window.location.origin}${window.location.pathname}`;
+      const tokenData = await WalmartTokenService.getAccessToken(code, redirectUri);
+      const storedToken = await WalmartTokenService.storeToken(user.id, tokenData);
+      setToken(storedToken);
+      
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
     } catch (error: any) {
-      setError(error.message || 'Failed to connect to Walmart');
+      setError(error.message || 'Failed to complete Walmart authorization');
     } finally {
       setConnecting(false);
     }
   };
 
+  const connectToWalmart = async () => {
+    if (!user) return;
+    
+    setError('');
+
+    try {
+      const redirectUri = `${window.location.origin}${window.location.pathname}`;
+      const state = crypto.randomUUID(); // Generate random state for security
+      const authUrl = WalmartTokenService.generateAuthorizationUrl(redirectUri, state);
+      
+      // Store state in sessionStorage for validation
+      sessionStorage.setItem('walmart_oauth_state', state);
+      
+      // Redirect to Walmart authorization page
+      window.location.href = authUrl;
+    } catch (error: any) {
+      setError(error.message || 'Failed to connect to Walmart');
+    }
+  };
+
   const refreshToken = async () => {
+    if (!user || !token?.refresh_token) return;
+    
     setLoading(true);
     setError('');
 
     try {
-      // Simulate token refresh
-      const mockTokenResponse = {
-        access_token: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9_refreshed...',
-        token_type: 'Bearer',
-        expires_in: 3600,
-      };
-
-      const expiresAt = new Date(Date.now() + mockTokenResponse.expires_in * 1000);
-
-      const { data, error } = await supabase
-        .from('walmart_tokens')
-        .update({
-          access_token: mockTokenResponse.access_token,
-          expires_at: expiresAt.toISOString(),
-        })
-        .eq('id', token!.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      setToken(data);
+      const newTokenData = await WalmartTokenService.refreshAccessToken(token.refresh_token);
+      const updatedToken = await WalmartTokenService.storeToken(user.id, newTokenData);
+      setToken(updatedToken);
     } catch (error: any) {
       setError(error.message || 'Failed to refresh token');
     } finally {
@@ -110,8 +106,13 @@ const WalmartConnection: React.FC = () => {
     }
   };
 
-  const isTokenExpired = token ? isAfter(new Date(), new Date(token.expiresAt)) : false;
-  const isTokenExpiringSoon = token ? isAfter(new Date(), subHours(new Date(token.expiresAt), 1)) : false;
+  const disconnectWalmart = async () => {
+    if (!user) return;
+    await WalmartTokenService.deleteToken(user.id);
+    setToken(null);
+  };
+
+  const isTokenExpiringSoon = token ? WalmartTokenService.isTokenExpiring(token, 60) : false; // 1 hour buffer
 
   return (
     <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
@@ -151,11 +152,11 @@ const WalmartConnection: React.FC = () => {
             {connecting ? (
               <>
                 <RefreshCw className="animate-spin h-4 w-4 mr-2" />
-                Connecting...
+                {connecting ? 'Connecting...' : 'Redirecting...'}
               </>
             ) : (
               <>
-                <ShoppingCart className="h-4 w-4 mr-2" />
+                <ExternalLink className="h-4 w-4 mr-2" />
                 Connect to Walmart
               </>
             )}
@@ -169,7 +170,7 @@ const WalmartConnection: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-green-800">Connected to Walmart</p>
                 <p className="text-xs text-green-600">
-                  Connected on {format(new Date(token.createdAt), 'MMM d, yyyy HH:mm')}
+                  Connected on {format(new Date(token.created_at), 'MMM d, yyyy HH:mm')}
                 </p>
               </div>
             </div>
@@ -182,7 +183,7 @@ const WalmartConnection: React.FC = () => {
                 <span className="text-sm font-medium text-gray-700">Access Token</span>
               </div>
               <p className="text-xs font-mono text-gray-600 break-all">
-                {token.accessToken.substring(0, 20)}...
+                {token.access_token.substring(0, 20)}...
               </p>
             </div>
 
@@ -193,14 +194,9 @@ const WalmartConnection: React.FC = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-gray-600">
-                  {format(new Date(token.expiresAt), 'MMM d, yyyy HH:mm')}
+                  {format(new Date(token.expires_at), 'MMM d, yyyy HH:mm')}
                 </p>
-                {isTokenExpired && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                    Expired
-                  </span>
-                )}
-                {!isTokenExpired && isTokenExpiringSoon && (
+                {isTokenExpiringSoon && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
                     Expiring Soon
                   </span>
@@ -210,23 +206,33 @@ const WalmartConnection: React.FC = () => {
           </div>
 
           <div className="flex justify-end">
-            <button
-              onClick={refreshToken}
-              disabled={loading}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="animate-spin h-4 w-4 mr-2" />
-                  Refreshing...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Refresh Token
-                </>
+            <div className="flex space-x-2">
+              {token.refresh_token && (
+                <button
+                  onClick={refreshToken}
+                  disabled={loading}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="animate-spin h-4 w-4 mr-2" />
+                      Refreshing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Refresh Token
+                    </>
+                  )}
+                </button>
               )}
-            </button>
+              <button
+                onClick={disconnectWalmart}
+                className="inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                Disconnect
+              </button>
+            </div>
           </div>
         </div>
       )}
