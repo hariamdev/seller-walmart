@@ -45,6 +45,10 @@ const WalmartConnection: React.FC = () => {
       setToken(tokenData);
     } catch (error) {
       console.error('Error fetching token:', error);
+      // Don't show error to user if table doesn't exist yet - they just need to connect
+      if (error instanceof Error && !error.message.includes('relation "public.walmart_tokens" does not exist')) {
+        setError('Failed to load Walmart connection status');
+      }
     }
   };
 
