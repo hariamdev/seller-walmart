@@ -1,0 +1,207 @@
+@using MudBlazor
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize]
+@inject IWalmartService WalmartService
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-6">
+    <MudGrid AlignItems="Center.Center" Class="mb-4">
+        <MudItem>
+            <MudIcon Icon="@Icons.Material.Filled.ShoppingCart" Size="Size.Large" Color="Color.Primary" />
+        </MudItem>
+        <MudItem>
+            <MudText Typo="Typo.h5">Walmart Marketplace</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Connect to Walmart's API to manage your listings
+            </MudText>
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4">@errorMessage</MudAlert>
+    }
+
+    @if (walmartToken == null)
+    {
+        <MudGrid Justify="Justify.Center" Class="pa-8">
+            <MudItem>
+                <MudIcon Icon="@Icons.Material.Filled.Key" Size="Size.Large" Color="Color.Secondary" Class="mb-4" />
+                <MudText Typo="Typo.h6" Align="Align.Center" Class="mb-2">Not Connected</MudText>
+                <MudText Typo="Typo.body2" Align="Align.Center" Color="Color.Secondary" Class="mb-6">
+                    Connect to Walmart Marketplace to start managing your products and orders.
+                </MudText>
+                <MudButton Variant="Variant.Filled" 
+                          Color="Color.Primary" 
+                          StartIcon="@Icons.Material.Filled.ShoppingCart"
+                          OnClick="ConnectToWalmart"
+                          Disabled="isConnecting">
+                    @if (isConnecting)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        <text>Connecting...</text>
+                    }
+                    else
+                    {
+                        <text>Connect to Walmart</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Success" Class="mb-4">
+            <MudGrid AlignItems="Center.Center">
+                <MudItem>
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" />
+                </MudItem>
+                <MudItem>
+                    <MudText Typo="Typo.body1"><strong>Connected to Walmart</strong></MudText>
+                    <MudText Typo="Typo.body2">
+                        Connected on @walmartToken.CreatedAt.ToString("MMM dd, yyyy HH:mm")
+                    </MudText>
+                </MudItem>
+            </MudGrid>
+        </MudAlert>
+
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Style="background-color: var(--mud-palette-background-grey);">
+                    <MudGrid AlignItems="Center.Center" Class="mb-2">
+                        <MudItem>
+                            <MudIcon Icon="@Icons.Material.Filled.Key" Size="Size.Small" />
+                        </MudItem>
+                        <MudItem>
+                            <MudText Typo="Typo.body1"><strong>Access Token</strong></MudText>
+                        </MudItem>
+                    </MudGrid>
+                    <MudText Typo="Typo.body2" Style="font-family: monospace; word-break: break-all;">
+                        @(walmartToken.AccessToken.Substring(0, Math.Min(20, walmartToken.AccessToken.Length)))...
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Style="background-color: var(--mud-palette-background-grey);">
+                    <MudGrid AlignItems="Center.Center" Class="mb-2">
+                        <MudItem>
+                            <MudIcon Icon="@Icons.Material.Filled.Schedule" Size="Size.Small" />
+                        </MudItem>
+                        <MudItem>
+                            <MudText Typo="Typo.body1"><strong>Expires</strong></MudText>
+                        </MudItem>
+                    </MudGrid>
+                    <MudGrid AlignItems="Center.Center">
+                        <MudItem>
+                            <MudText Typo="Typo.body2">
+                                @walmartToken.ExpiresAt.ToString("MMM dd, yyyy HH:mm")
+                            </MudText>
+                        </MudItem>
+                        @if (IsTokenExpired)
+                        {
+                            <MudItem>
+                                <MudChip Color="Color.Error" Size="Size.Small">Expired</MudChip>
+                            </MudItem>
+                        }
+                        else if (IsTokenExpiringSoon)
+                        {
+                            <MudItem>
+                                <MudChip Color="Color.Warning" Size="Size.Small">Expiring Soon</MudChip>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudGrid Justify="Justify.FlexEnd" Class="mt-4">
+            <MudItem>
+                <MudButton Variant="Variant.Outlined" 
+                          Color="Color.Primary" 
+                          StartIcon="@Icons.Material.Filled.Refresh"
+                          OnClick="RefreshToken"
+                          Disabled="isRefreshing">
+                    @if (isRefreshing)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        <text>Refreshing...</text>
+                    }
+                    else
+                    {
+                        <text>Refresh Token</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    }
+</MudPaper>
+
+@code {
+    private WalmartToken? walmartToken;
+    private bool isConnecting = false;
+    private bool isRefreshing = false;
+    private string errorMessage = string.Empty;
+
+    private bool IsTokenExpired => walmartToken != null && DateTime.UtcNow > walmartToken.ExpiresAt;
+    private bool IsTokenExpiringSoon => walmartToken != null && DateTime.UtcNow > walmartToken.ExpiresAt.AddHours(-1);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadToken();
+    }
+
+    private async Task LoadToken()
+    {
+        try
+        {
+            walmartToken = await WalmartService.GetTokenAsync();
+        }
+        catch (Exception ex)
+        {
+            // Token not found is expected for new users
+        }
+    }
+
+    private async Task ConnectToWalmart()
+    {
+        isConnecting = true;
+        errorMessage = string.Empty;
+
+        try
+        {
+            walmartToken = await WalmartService.ConnectAsync();
+            Snackbar.Add("Successfully connected to Walmart!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            Snackbar.Add("Failed to connect to Walmart", Severity.Error);
+        }
+        finally
+        {
+            isConnecting = false;
+        }
+    }
+
+    private async Task RefreshToken()
+    {
+        isRefreshing = true;
+        errorMessage = string.Empty;
+
+        try
+        {
+            walmartToken = await WalmartService.RefreshTokenAsync();
+            Snackbar.Add("Token refreshed successfully!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+            Snackbar.Add("Failed to refresh token", Severity.Error);
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
+}
