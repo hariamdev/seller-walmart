@@ -50,7 +50,7 @@ CREATE POLICY "Users can manage own walmart tokens"
   ON walmart_tokens
   FOR ALL
   TO authenticated
-  USING (auth.uid() = seller_id);
+  USING (auth.uid() = user_id);
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_walmart_tokens_seller_id ON walmart_tokens(seller_id);
