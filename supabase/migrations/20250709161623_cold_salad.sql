@@ -27,18 +27,19 @@
 -- Create the walmart_tokens table
 CREATE TABLE IF NOT EXISTS walmart_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  seller_id uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   access_token text NOT NULL,
   refresh_token text,
   token_type text DEFAULT 'Bearer',
   expires_in integer NOT NULL,
   expires_at timestamptz NOT NULL,
+  seller_id text,
   scope text,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now(),
   
   -- Ensure one token per seller
-  UNIQUE(seller_id)
+  UNIQUE(user_id)
 );
 
 -- Enable Row Level Security
