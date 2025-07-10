@@ -191,7 +191,7 @@ const ProductList: React.FC = () => {
                     {getStatusBadge(product.status)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {format(new Date(product.updatedAt), 'MMM d, yyyy')}
+                    {format(new Date(product.updated_at), 'MMM d, yyyy')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex items-center space-x-2">
