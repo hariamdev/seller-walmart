@@ -8,9 +8,11 @@ import {
   RefreshCw,
   Clock,
   Key,
-  ExternalLink
+  ExternalLink,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
-import { format, isAfter, subHours } from 'date-fns';
+import { format } from 'date-fns';
 
 const WalmartConnection: React.FC = () => {
   const { user } = useAuth();
@@ -18,9 +20,14 @@ const WalmartConnection: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<{
+    isConnected: boolean;
+    isExpiring?: boolean;
+    needsRefresh?: boolean;
+  }>({ isConnected: false });
 
   useEffect(() => {
-    fetchToken();
+    checkConnectionStatus();
     
     // Check for authorization code in URL (OAuth callback)
     const urlParams = new URLSearchParams(window.location.search);
@@ -37,18 +44,21 @@ const WalmartConnection: React.FC = () => {
     }
   }, [user]);
 
-  const fetchToken = async () => {
+  const checkConnectionStatus = async () => {
     if (!user) return;
 
     try {
-      const tokenData = await WalmartTokenService.getStoredToken(user.id);
-      setToken(tokenData);
-    } catch (error) {
-      console.error('Error fetching token:', error);
-      // Don't show error to user if table doesn't exist yet - they just need to connect
-      if (error instanceof Error && !error.message.includes('relation "public.walmart_tokens" does not exist')) {
-        setError('Failed to load Walmart connection status');
+      const status = await WalmartTokenService.getConnectionStatus(user.id);
+      setConnectionStatus(status);
+      setToken(status.token || null);
+
+      // Auto-refresh if needed
+      if (status.needsRefresh && status.token?.refresh_token) {
+        await refreshToken(true); // Silent refresh
       }
+    } catch (error) {
+      console.error('Error checking connection status:', error);
+      setConnectionStatus({ isConnected: false });
     }
   };
 
@@ -63,6 +73,7 @@ const WalmartConnection: React.FC = () => {
       const tokenData = await WalmartTokenService.getAccessToken(code, redirectUri);
       const storedToken = await WalmartTokenService.storeToken(user.id, tokenData);
       setToken(storedToken);
+      setConnectionStatus({ isConnected: true });
       
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -93,20 +104,34 @@ const WalmartConnection: React.FC = () => {
     }
   };
 
-  const refreshToken = async () => {
+  const refreshToken = async (silent: boolean = false) => {
     if (!user || !token?.refresh_token) return;
     
-    setLoading(true);
-    setError('');
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
 
     try {
       const newTokenData = await WalmartTokenService.refreshAccessToken(token.refresh_token);
-      const updatedToken = await WalmartTokenService.storeToken(user.id, newTokenData);
+      const updatedToken = await WalmartTokenService.storeToken(user.id, newTokenData, token.seller_id);
       setToken(updatedToken);
+      setConnectionStatus({ isConnected: true });
+      
+      if (!silent) {
+        // Show success message for manual refresh
+        setError('');
+      }
     } catch (error: any) {
-      setError(error.message || 'Failed to refresh token');
+      const errorMessage = error.message || 'Failed to refresh token';
+      if (!silent) {
+        setError(errorMessage);
+      }
+      console.error('Token refresh failed:', errorMessage);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -114,19 +139,67 @@ const WalmartConnection: React.FC = () => {
     if (!user) return;
     await WalmartTokenService.deleteToken(user.id);
     setToken(null);
+    setConnectionStatus({ isConnected: false });
   };
 
-  const isTokenExpiringSoon = token ? WalmartTokenService.isTokenExpiring(token, 60) : false; // 1 hour buffer
+  const getConnectionStatusDisplay = () => {
+    if (!connectionStatus.isConnected) {
+      return {
+        icon: WifiOff,
+        text: 'Not Connected',
+        color: 'text-gray-500',
+        bgColor: 'bg-gray-100'
+      };
+    }
+
+    if (connectionStatus.needsRefresh) {
+      return {
+        icon: AlertCircle,
+        text: 'Token Expired',
+        color: 'text-red-600',
+        bgColor: 'bg-red-100'
+      };
+    }
+
+    if (connectionStatus.isExpiring) {
+      return {
+        icon: Clock,
+        text: 'Token Expiring Soon',
+        color: 'text-yellow-600',
+        bgColor: 'bg-yellow-100'
+      };
+    }
+
+    return {
+      icon: Wifi,
+      text: 'Connected',
+      color: 'text-green-600',
+      bgColor: 'bg-green-100'
+    };
+  };
+
+  const statusDisplay = getConnectionStatusDisplay();
+  const StatusIcon = statusDisplay.icon;
 
   return (
     <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
-      <div className="flex items-center space-x-3 mb-6">
-        <div className="flex-shrink-0">
-          <ShoppingCart className="h-8 w-8 text-blue-600" />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center space-x-3">
+          <div className="flex-shrink-0">
+            <ShoppingCart className="h-8 w-8 text-blue-600" />
+          </div>
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Walmart Marketplace</h3>
+            <p className="text-sm text-gray-500">Connect to Walmart's API to manage your listings</p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-lg font-medium text-gray-900">Walmart Marketplace</h3>
-          <p className="text-sm text-gray-500">Connect to Walmart's API to manage your listings</p>
+        
+        {/* Connection Status Indicator */}
+        <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${statusDisplay.bgColor}`}>
+          <StatusIcon className={`h-4 w-4 ${statusDisplay.color}`} />
+          <span className={`text-sm font-medium ${statusDisplay.color}`}>
+            {statusDisplay.text}
+          </span>
         </div>
       </div>
 
@@ -137,7 +210,7 @@ const WalmartConnection: React.FC = () => {
         </div>
       )}
 
-      {!token ? (
+      {!connectionStatus.isConnected ? (
         <div className="text-center py-8">
           <div className="mb-4">
             <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-gray-100">
@@ -156,7 +229,7 @@ const WalmartConnection: React.FC = () => {
             {connecting ? (
               <>
                 <RefreshCw className="animate-spin h-4 w-4 mr-2" />
-                {connecting ? 'Connecting...' : 'Redirecting...'}
+                Connecting...
               </>
             ) : (
               <>
@@ -174,8 +247,13 @@ const WalmartConnection: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-green-800">Connected to Walmart</p>
                 <p className="text-xs text-green-600">
-                  Connected on {format(new Date(token.created_at), 'MMM d, yyyy HH:mm')}
+                  Connected on {format(new Date(token!.created_at), 'MMM d, yyyy HH:mm')}
                 </p>
+                {token?.seller_id && (
+                  <p className="text-xs text-green-600">
+                    Seller ID: {token.seller_id}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -187,7 +265,7 @@ const WalmartConnection: React.FC = () => {
                 <span className="text-sm font-medium text-gray-700">Access Token</span>
               </div>
               <p className="text-xs font-mono text-gray-600 break-all">
-                {token.access_token.substring(0, 20)}...
+                {token!.access_token.substring(0, 20)}... (encrypted)
               </p>
             </div>
 
@@ -198,9 +276,9 @@ const WalmartConnection: React.FC = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-gray-600">
-                  {format(new Date(token.expires_at), 'MMM d, yyyy HH:mm')}
+                  {format(new Date(token!.expires_at), 'MMM d, yyyy HH:mm')}
                 </p>
-                {isTokenExpiringSoon && (
+                {connectionStatus.isExpiring && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
                     Expiring Soon
                   </span>
@@ -211,9 +289,9 @@ const WalmartConnection: React.FC = () => {
 
           <div className="flex justify-end">
             <div className="flex space-x-2">
-              {token.refresh_token && (
+              {token?.refresh_token && (
                 <button
-                  onClick={refreshToken}
+                  onClick={() => refreshToken(false)}
                   disabled={loading}
                   className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >

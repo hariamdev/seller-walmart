@@ -18,13 +18,14 @@ export interface WalmartTokenResponse {
 
 export interface WalmartTokenRecord {
   id: string;
-  seller_id: string;
+  user_id: string;
   access_token: string;
   refresh_token?: string;
   token_type: string;
   expires_in: number;
   expires_at: string;
   scope?: string;
+  seller_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -116,17 +117,18 @@ export class WalmartTokenService {
   /**
    * Store token in database
    */
-  static async storeToken(sellerId: string, tokenData: WalmartTokenResponse): Promise<WalmartTokenRecord> {
+  static async storeToken(userId: string, tokenData: WalmartTokenResponse, sellerId?: string): Promise<WalmartTokenRecord> {
     try {
       const { data, error } = await supabase
         .from('walmart_tokens')
         .upsert({
-          seller_id: sellerId,
+          user_id: userId,
           access_token: tokenData.access_token,
           refresh_token: tokenData.refresh_token,
           token_type: tokenData.token_type,
           expires_in: tokenData.expires_in,
           scope: tokenData.scope,
+          seller_id: sellerId,
         })
         .select()
         .single();
@@ -142,12 +144,12 @@ export class WalmartTokenService {
   /**
    * Get stored token from database
    */
-  static async getStoredToken(sellerId: string): Promise<WalmartTokenRecord | null> {
+  static async getStoredToken(userId: string): Promise<WalmartTokenRecord | null> {
     try {
       const { data, error } = await supabase
         .from('walmart_tokens')
         .select('*')
-        .eq('seller_id', sellerId)
+        .eq('user_id', userId)
         .single();
 
       if (error && error.code !== 'PGRST116') throw error;
@@ -159,7 +161,7 @@ export class WalmartTokenService {
   }
 
   /**
-   * Check if token is expired or expiring soon (within 5 minutes)
+   * Check if token is expired or expiring soon
    */
   static isTokenExpiring(token: WalmartTokenRecord, bufferMinutes: number = 5): boolean {
     const expiresAt = new Date(token.expires_at);
@@ -172,8 +174,8 @@ export class WalmartTokenService {
   /**
    * Get valid access token (refresh if needed)
    */
-  static async getValidAccessToken(sellerId: string): Promise<string> {
-    const storedToken = await this.getStoredToken(sellerId);
+  static async getValidAccessToken(userId: string): Promise<{ token: string; isRefreshed: boolean }> {
+    const storedToken = await this.getStoredToken(userId);
     
     if (!storedToken) {
       throw new Error('No Walmart token found. Please connect to Walmart first.');
@@ -181,15 +183,15 @@ export class WalmartTokenService {
 
     // If token is not expiring, return it
     if (!this.isTokenExpiring(storedToken)) {
-      return storedToken.access_token;
+      return { token: storedToken.access_token, isRefreshed: false };
     }
 
     // If token is expiring and we have a refresh token, refresh it
     if (storedToken.refresh_token) {
       try {
         const newTokenData = await this.refreshAccessToken(storedToken.refresh_token);
-        const updatedToken = await this.storeToken(sellerId, newTokenData);
-        return updatedToken.access_token;
+        const updatedToken = await this.storeToken(userId, newTokenData, storedToken.seller_id);
+        return { token: updatedToken.access_token, isRefreshed: true };
       } catch (error) {
         console.error('Error refreshing token:', error);
         throw new Error('Token expired and refresh failed. Please reconnect to Walmart.');
@@ -202,12 +204,12 @@ export class WalmartTokenService {
   /**
    * Delete stored token
    */
-  static async deleteToken(sellerId: string): Promise<void> {
+  static async deleteToken(userId: string): Promise<void> {
     try {
       const { error } = await supabase
         .from('walmart_tokens')
         .delete()
-        .eq('seller_id', sellerId);
+        .eq('user_id', userId);
 
       if (error) throw error;
     } catch (error) {
@@ -236,5 +238,36 @@ export class WalmartTokenService {
     }
 
     return `${WALMART_API_BASE_URL}/v3/token/authorize?${params.toString()}`;
+  }
+
+  /**
+   * Check connection status and get token info
+   */
+  static async getConnectionStatus(userId: string): Promise<{
+    isConnected: boolean;
+    token?: WalmartTokenRecord;
+    isExpiring?: boolean;
+    needsRefresh?: boolean;
+  }> {
+    try {
+      const token = await this.getStoredToken(userId);
+      
+      if (!token) {
+        return { isConnected: false };
+      }
+
+      const isExpiring = this.isTokenExpiring(token, 60); // 1 hour buffer
+      const needsRefresh = this.isTokenExpiring(token, 5); // 5 minutes buffer
+
+      return {
+        isConnected: true,
+        token,
+        isExpiring,
+        needsRefresh
+      };
+    } catch (error) {
+      console.error('Error checking connection status:', error);
+      return { isConnected: false };
+    }
   }
 }
