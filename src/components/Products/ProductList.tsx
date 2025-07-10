@@ -59,7 +59,7 @@ const ProductList: React.FC = () => {
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedProducts = filteredProducts.slice(startIndex, startIndex + itemsPerPage);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string) =>
     const statusStyles = {
       active: 'bg-green-100 text-green-800',
       inactive: 'bg-red-100 text-red-800',
