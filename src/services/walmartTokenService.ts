@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { EncryptionService } from './encryptionService';
 
 // Walmart API configuration
 const WALMART_API_BASE_URL = 'https://marketplace.walmartapis.com';
@@ -19,8 +20,8 @@ export interface WalmartTokenResponse {
 export interface WalmartTokenRecord {
   id: string;
   user_id: string;
-  access_token: string;
-  refresh_token?: string;
+  access_token: string; // This will be encrypted in the database
+  refresh_token?: string; // This will be encrypted in the database
   token_type: string;
   expires_in: number;
   expires_at: string;
@@ -32,72 +33,40 @@ export interface WalmartTokenRecord {
 
 export class WalmartTokenService {
   /**
-   * Get access token using authorization code flow
-   * Reference: https://developer.walmart.com/us-marketplace/reference/tokenapi
+   * Refresh access token using encrypted refresh token (matches C# implementation)
    */
-  static async getAccessToken(authorizationCode: string, redirectUri: string): Promise<WalmartTokenResponse> {
+  static async refreshAccessToken(encryptedRefreshToken: string, sellerId?: string): Promise<WalmartTokenResponse> {
     if (!WALMART_CLIENT_ID || !WALMART_CLIENT_SECRET) {
       throw new Error('Walmart API credentials not configured. Please set VITE_WALMART_CLIENT_ID and VITE_WALMART_CLIENT_SECRET in your environment variables.');
     }
 
-    const params = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code: authorizationCode,
-      redirect_uri: redirectUri,
-      client_id: WALMART_CLIENT_ID,
-      client_secret: WALMART_CLIENT_SECRET,
-    });
-
     try {
-      const response = await fetch(WALMART_TOKEN_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-          'WM_SVC.NAME': 'Walmart Marketplace',
-          'WM_QOS.CORRELATION_ID': crypto.randomUUID(),
-        },
-        body: params.toString(),
+      // Decrypt the refresh token
+      const refreshToken = await EncryptionService.decryptToken(encryptedRefreshToken);
+
+      const params = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Walmart API Error: ${response.status} - ${errorData.error_description || response.statusText}`);
+      const credentials = btoa(`${WALMART_CLIENT_ID}:${WALMART_CLIENT_SECRET}`);
+      
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+        'Authorization': `Basic ${credentials}`,
+        'WM_QOS.CORRELATION_ID': crypto.randomUUID(),
+        'WM_SVC.NAME': 'VNLWFS',
+      };
+
+      // Add seller ID if provided (matches C# implementation)
+      if (sellerId) {
+        headers['WM_PARTNER.ID'] = sellerId;
       }
 
-      const tokenData: WalmartTokenResponse = await response.json();
-      return tokenData;
-    } catch (error) {
-      console.error('Error getting Walmart access token:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Refresh access token using refresh token
-   * Reference: https://developer.walmart.com/us-marketplace/reference/tokenapi
-   */
-  static async refreshAccessToken(refreshToken: string): Promise<WalmartTokenResponse> {
-    if (!WALMART_CLIENT_ID || !WALMART_CLIENT_SECRET) {
-      throw new Error('Walmart API credentials not configured. Please set VITE_WALMART_CLIENT_ID and VITE_WALMART_CLIENT_SECRET in your environment variables.');
-    }
-
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: WALMART_CLIENT_ID,
-      client_secret: WALMART_CLIENT_SECRET,
-    });
-
-    try {
       const response = await fetch(WALMART_TOKEN_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-          'WM_SVC.NAME': 'Walmart Marketplace',
-          'WM_QOS.CORRELATION_ID': crypto.randomUUID(),
-        },
+        headers,
         body: params.toString(),
       });
 
@@ -115,18 +84,28 @@ export class WalmartTokenService {
   }
 
   /**
-   * Store token in database
+   * Store encrypted token in database (matches C# SellerToken model)
    */
   static async storeToken(userId: string, tokenData: WalmartTokenResponse, sellerId?: string): Promise<WalmartTokenRecord> {
     try {
+      // Encrypt tokens before storing
+      const encryptedAccessToken = await EncryptionService.encryptToken(tokenData.access_token);
+      const encryptedRefreshToken = tokenData.refresh_token 
+        ? await EncryptionService.encryptToken(tokenData.refresh_token)
+        : null;
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + (tokenData.expires_in * 1000));
+
       const { data, error } = await supabase
         .from('walmart_tokens')
         .upsert({
           user_id: userId,
-          access_token: tokenData.access_token,
-          refresh_token: tokenData.refresh_token,
+          access_token: encryptedAccessToken,
+          refresh_token: encryptedRefreshToken,
           token_type: tokenData.token_type,
           expires_in: tokenData.expires_in,
+          expires_at: expiresAt.toISOString(),
           scope: tokenData.scope,
           seller_id: sellerId,
         })
@@ -172,7 +151,7 @@ export class WalmartTokenService {
   }
 
   /**
-   * Get valid access token (refresh if needed)
+   * Get valid decrypted access token (refresh if needed)
    */
   static async getValidAccessToken(userId: string): Promise<{ token: string; isRefreshed: boolean }> {
     const storedToken = await this.getStoredToken(userId);
@@ -181,17 +160,19 @@ export class WalmartTokenService {
       throw new Error('No Walmart token found. Please connect to Walmart first.');
     }
 
-    // If token is not expiring, return it
+    // If token is not expiring, decrypt and return it
     if (!this.isTokenExpiring(storedToken)) {
-      return { token: storedToken.access_token, isRefreshed: false };
+      const decryptedToken = await EncryptionService.decryptToken(storedToken.access_token);
+      return { token: decryptedToken, isRefreshed: false };
     }
 
     // If token is expiring and we have a refresh token, refresh it
     if (storedToken.refresh_token) {
       try {
-        const newTokenData = await this.refreshAccessToken(storedToken.refresh_token);
+        const newTokenData = await this.refreshAccessToken(storedToken.refresh_token, storedToken.seller_id);
         const updatedToken = await this.storeToken(userId, newTokenData, storedToken.seller_id);
-        return { token: updatedToken.access_token, isRefreshed: true };
+        const decryptedToken = await EncryptionService.decryptToken(updatedToken.access_token);
+        return { token: decryptedToken, isRefreshed: true };
       } catch (error) {
         console.error('Error refreshing token:', error);
         throw new Error('Token expired and refresh failed. Please reconnect to Walmart.');
@@ -241,6 +222,47 @@ export class WalmartTokenService {
   }
 
   /**
+   * Get access token using authorization code flow
+   */
+  static async getAccessToken(authorizationCode: string, redirectUri: string): Promise<WalmartTokenResponse> {
+    if (!WALMART_CLIENT_ID || !WALMART_CLIENT_SECRET) {
+      throw new Error('Walmart API credentials not configured. Please set VITE_WALMART_CLIENT_ID and VITE_WALMART_CLIENT_SECRET in your environment variables.');
+    }
+
+    const params = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: authorizationCode,
+      redirect_uri: redirectUri,
+      client_id: WALMART_CLIENT_ID,
+      client_secret: WALMART_CLIENT_SECRET,
+    });
+
+    try {
+      const response = await fetch(WALMART_TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+          'WM_SVC.NAME': 'VNLWFS',
+          'WM_QOS.CORRELATION_ID': crypto.randomUUID(),
+        },
+        body: params.toString(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Walmart API Error: ${response.status} - ${errorData.error_description || response.statusText}`);
+      }
+
+      const tokenData: WalmartTokenResponse = await response.json();
+      return tokenData;
+    } catch (error) {
+      console.error('Error getting Walmart access token:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Check connection status and get token info
    */
   static async getConnectionStatus(userId: string): Promise<{
@@ -268,6 +290,55 @@ export class WalmartTokenService {
     } catch (error) {
       console.error('Error checking connection status:', error);
       return { isConnected: false };
+    }
+  }
+
+  /**
+   * Auto-refresh token if needed and return connection status
+   */
+  static async ensureValidConnection(userId: string): Promise<{
+    isConnected: boolean;
+    token?: WalmartTokenRecord;
+    wasRefreshed?: boolean;
+    error?: string;
+  }> {
+    try {
+      const status = await this.getConnectionStatus(userId);
+      
+      if (!status.isConnected) {
+        return { isConnected: false };
+      }
+
+      // If token needs refresh, try to refresh it
+      if (status.needsRefresh && status.token?.refresh_token) {
+        try {
+          const newTokenData = await this.refreshAccessToken(status.token.refresh_token, status.token.seller_id);
+          const updatedToken = await this.storeToken(userId, newTokenData, status.token.seller_id);
+          
+          return {
+            isConnected: true,
+            token: updatedToken,
+            wasRefreshed: true
+          };
+        } catch (refreshError) {
+          return {
+            isConnected: false,
+            error: 'Token refresh failed. Please reconnect to Walmart.'
+          };
+        }
+      }
+
+      return {
+        isConnected: true,
+        token: status.token,
+        wasRefreshed: false
+      };
+    } catch (error) {
+      console.error('Error ensuring valid connection:', error);
+      return {
+        isConnected: false,
+        error: 'Failed to check connection status'
+      };
     }
   }
 }
