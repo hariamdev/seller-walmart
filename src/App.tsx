@@ -7,6 +7,9 @@ import RegisterForm from './components/Auth/RegisterForm';
 import ForgotPasswordForm from './components/Auth/ForgotPasswordForm';
 import Dashboard from './components/Dashboard/Dashboard';
 import ProductList from './components/Products/ProductList';
+import OrderList from './components/Orders/OrderList';
+import InventoryList from './components/Inventory/InventoryList';
+import ShippingList from './components/Shipping/ShippingList';
 import ApiExplorer from './components/ApiExplorer/ApiExplorer';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -86,6 +89,45 @@ const AppContent: React.FC = () => {
                 <Navbar />
                 <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
                   <ProductList />
+                </main>
+              </div>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            <ProtectedRoute>
+              <div className="min-h-screen bg-gray-50">
+                <Navbar />
+                <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                  <OrderList />
+                </main>
+              </div>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inventory"
+          element={
+            <ProtectedRoute>
+              <div className="min-h-screen bg-gray-50">
+                <Navbar />
+                <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                  <InventoryList />
+                </main>
+              </div>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/shipping"
+          element={
+            <ProtectedRoute>
+              <div className="min-h-screen bg-gray-50">
+                <Navbar />
+                <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                  <ShippingList />
                 </main>
               </div>
             </ProtectedRoute>

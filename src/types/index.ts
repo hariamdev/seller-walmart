@@ -55,3 +55,73 @@ export interface ApiResponse {
   headers: Record<string, string>;
   timestamp: string;
 }
+
+export interface Order {
+  id: string;
+  purchaseOrderId: string;
+  customerOrderId: string;
+  customerName: string;
+  customerEmail: string;
+  orderDate: string;
+  status: 'created' | 'acknowledged' | 'shipped' | 'delivered' | 'cancelled';
+  totalAmount: number;
+  shippingAddress: {
+    name: string;
+    address1: string;
+    address2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
+  };
+  items: OrderItem[];
+}
+
+export interface OrderItem {
+  id: string;
+  sku: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+export interface InventoryItem {
+  id: string;
+  sku: string;
+  productName: string;
+  availableQuantity: number;
+  reservedQuantity: number;
+  totalQuantity: number;
+  lastUpdated: string;
+  location: string;
+  status: 'in_stock' | 'low_stock' | 'out_of_stock';
+}
+
+export interface Shipment {
+  id: string;
+  orderId: string;
+  trackingNumber: string;
+  carrier: string;
+  status: 'pending' | 'in_transit' | 'delivered' | 'exception';
+  shippedDate: string;
+  estimatedDelivery: string;
+  actualDelivery?: string;
+  shippingAddress: {
+    name: string;
+    address1: string;
+    address2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
+  };
+  items: ShipmentItem[];
+}
+
+export interface ShipmentItem {
+  id: string;
+  sku: string;
+  productName: string;
+  quantity: number;
+}

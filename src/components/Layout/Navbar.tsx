@@ -4,6 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { 
   Store, 
   Package, 
+  ShoppingCart,
+  Truck,
   Settings, 
   LogOut, 
   Menu,
@@ -19,6 +21,9 @@ const Navbar: React.FC = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Store },
     { name: 'Products', href: '/products', icon: Package },
+    { name: 'Orders', href: '/orders', icon: ShoppingCart },
+    { name: 'Inventory', href: '/inventory', icon: Package },
+    { name: 'Shipping', href: '/shipping', icon: Truck },
     { name: 'API Explorer', href: '/api-explorer', icon: Search },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
