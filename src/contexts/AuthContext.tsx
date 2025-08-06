@@ -60,17 +60,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signUp = async (email: string, password: string, firstName: string, lastName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          first_name: firstName,
-          last_name: lastName,
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+          },
         },
-      },
-    });
-    return { error };
+      });
+      return { error };
+    } catch (networkError) {
+      return {
+        error: {
+          message: 'Unable to connect to authentication service. Please check your connection and try again.'
+        }
+      };
+    }
   };
 
   const signOut = async () => {
