@@ -86,8 +86,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
-    return { error };
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      return { error };
+    } catch (networkError) {
+      return {
+        error: {
+          message: 'Unable to connect to authentication service. Please check your connection and try again.'
+        }
+      };
+    }
   };
 
   const value = {
