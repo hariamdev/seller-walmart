@@ -1,4 +1,4 @@
-# Seller Portal
+ # Seller Portal
 
 A comprehensive seller portal application built with React + TypeScript and Supabase, with Blazor reference components for .NET development.
 
